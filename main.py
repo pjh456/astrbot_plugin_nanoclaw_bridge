@@ -21,9 +21,15 @@ def _to_iso(ts: Optional[int]) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
+def _derive_control_url(inbound_url: str) -> str:
+    if inbound_url.endswith("/astrbot/inbound"):
+        return inbound_url[: -len("/astrbot/inbound")] + "/astrbot/control"
+    return inbound_url.rstrip("/") + "/astrbot/control"
+
+
 @register(
     "nanoclaw_bridge",
-    "yourname",
+    "pjh456",
     "Forward AstrBot messages to NanoClaw",
     "0.1.0",
 )
@@ -33,6 +39,9 @@ class NanoClawBridge(Star):
         cfg = context.get_config()
 
         self.inbound_url: str = cfg.get("nanoclaw_inbound_url", DEFAULT_INBOUND_URL)
+        self.control_url: str = cfg.get(
+            "nanoclaw_control_url", _derive_control_url(self.inbound_url)
+        )
         self.token: str = cfg.get("nanoclaw_token", "")
         self.forward_mode: str = cfg.get("forward_mode", "all")
         self.command_prefix: str = cfg.get("command_prefix", "/nc ")
@@ -56,6 +65,10 @@ class NanoClawBridge(Star):
     def _should_forward(self, event: AstrMessageEvent, content: str) -> bool:
         if not content:
             return False
+        if content.startswith("/nc_main") or content.startswith("/nc_use"):
+            return False
+        if content.startswith("/nc main") or content.startswith("/nc use"):
+            return False
         mode = self.forward_mode.lower().strip()
         if mode == "all":
             return True
@@ -78,6 +91,56 @@ class NanoClawBridge(Star):
                 )
         except Exception as exc:
             logger.warning(f"NanoClaw inbound error: {exc}")
+
+    async def _post_control(self, payload: Dict[str, Any]) -> None:
+        headers = {"Content-Type": "application/json"}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        try:
+            resp = await self._client.post(self.control_url, json=payload, headers=headers)
+            if resp.status_code >= 300:
+                logger.warning(
+                    f"NanoClaw control failed {resp.status_code}: {resp.text}"
+                )
+        except Exception as exc:
+            logger.warning(f"NanoClaw control error: {exc}")
+
+    @filter.command("nc_main")
+    async def cmd_set_main(self, event: AstrMessageEvent):
+        await self._handle_set_main(event)
+        yield event.plain_result("已将当前会话设置为 NanoClaw 主控。")
+
+    @filter.command("nc_use")
+    async def cmd_set_main_alias(self, event: AstrMessageEvent):
+        await self._handle_set_main(event)
+        yield event.plain_result("已将当前会话设置为 NanoClaw 主控。")
+
+    async def _handle_set_main(self, event: AstrMessageEvent) -> None:
+        try:
+            msg_obj = event.message_obj
+            session_id = getattr(msg_obj, "session_id", None)
+        except Exception:
+            session_id = None
+
+        try:
+            umo = event.unified_msg_origin
+        except Exception:
+            umo = None
+
+        sender_name = ""
+        try:
+            sender_name = event.get_sender_name() or ""
+        except Exception:
+            sender_name = ""
+
+        payload: Dict[str, Any] = {
+            "action": "set_main",
+            "chat_id": str(umo or session_id or "unknown"),
+            "umo": str(umo) if umo is not None else None,
+            "group_name": sender_name or None,
+            "sender_name": sender_name or None,
+        }
+        await self._post_control(payload)
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
@@ -117,7 +180,7 @@ class NanoClawBridge(Star):
             umo = None
 
         payload: Dict[str, Any] = {
-            "chat_id": str(session_id or umo or "unknown"),
+            "chat_id": str(umo or session_id or "unknown"),
             "umo": str(umo) if umo is not None else None,
             "sender_id": sender_id,
             "sender_name": sender_name or sender_id or "unknown",

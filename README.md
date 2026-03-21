@@ -11,6 +11,7 @@ Forward AstrBot messages to NanoClaw via HTTP.
 ## Config
 
 - `nanoclaw_inbound_url`: NanoClaw inbound URL
+- `nanoclaw_control_url`: NanoClaw control URL (optional, auto-derived from inbound URL)
 - `nanoclaw_token`: Shared token for NanoClaw inbound auth (optional)
 - `forward_mode`: `all` | `command` | `mention`
 - `command_prefix`: prefix for command mode
@@ -34,6 +35,11 @@ ASTRBOT_API_KEY=abk_xxx
 The plugin posts JSON to NanoClaw:
 
 ```
+
+## Commands
+
+- `/nc_main` set current chat as NanoClaw main control
+- `/nc_use` alias for `/nc_main`
 {
   "chat_id": "<session_id>",
   "umo": "<unified_msg_origin>",

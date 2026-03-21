@@ -4,6 +4,11 @@
     "description": "NanoClaw inbound URL",
     "default": "http://127.0.0.1:7801/astrbot/inbound"
   },
+  "nanoclaw_control_url": {
+    "type": "string",
+    "description": "NanoClaw control URL",
+    "default": ""
+  },
   "nanoclaw_token": {
     "type": "string",
     "description": "Shared token for NanoClaw inbound auth",
