@@ -39,8 +39,11 @@ class NanoClawBridge(Star):
         cfg = context.get_config()
 
         self.inbound_url: str = cfg.get("nanoclaw_inbound_url", DEFAULT_INBOUND_URL)
-        self.control_url: str = cfg.get(
-            "nanoclaw_control_url", _derive_control_url(self.inbound_url)
+        raw_control_url = cfg.get("nanoclaw_control_url", "")
+        self.control_url: str = (
+            raw_control_url.strip()
+            if isinstance(raw_control_url, str) and raw_control_url.strip()
+            else _derive_control_url(self.inbound_url)
         )
         self.token: str = cfg.get("nanoclaw_token", "")
         self.forward_mode: str = cfg.get("forward_mode", "all")
