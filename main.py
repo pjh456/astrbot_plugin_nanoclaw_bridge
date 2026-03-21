@@ -51,7 +51,13 @@ class NanoClawBridge(Star):
         self.ignore_self: bool = bool(cfg.get("ignore_self", True))
         self.timeout_ms: int = int(cfg.get("timeout_ms", 15000))
 
-        self._client = httpx.AsyncClient(timeout=self.timeout_ms / 1000)
+        # Avoid container-level proxy envs breaking local calls
+        self._client = httpx.AsyncClient(
+            timeout=self.timeout_ms / 1000, trust_env=False
+        )
+        logger.info(
+            f"NanoClaw bridge config inbound={self.inbound_url} control={self.control_url}"
+        )
 
     async def terminate(self):
         await self._client.aclose()
@@ -87,20 +93,24 @@ class NanoClawBridge(Star):
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         try:
-            resp = await self._client.post(self.inbound_url, json=payload, headers=headers)
+            resp = await self._client.post(
+                self.inbound_url, json=payload, headers=headers
+            )
             if resp.status_code >= 300:
                 logger.warning(
                     f"NanoClaw inbound failed {resp.status_code}: {resp.text}"
                 )
         except Exception as exc:
-            logger.warning(f"NanoClaw inbound error: {exc}")
+            logger.warning(f"NanoClaw inbound error ({self.inbound_url}): {exc!r}")
 
     async def _post_control(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
         try:
-            resp = await self._client.post(self.control_url, json=payload, headers=headers)
+            resp = await self._client.post(
+                self.control_url, json=payload, headers=headers
+            )
             if resp.status_code >= 300:
                 logger.warning(
                     f"NanoClaw control failed {resp.status_code}: {resp.text}"
@@ -111,7 +121,7 @@ class NanoClawBridge(Star):
             except Exception:
                 return None
         except Exception as exc:
-            logger.warning(f"NanoClaw control error: {exc}")
+            logger.warning(f"NanoClaw control error ({self.control_url}): {exc!r}")
             return None
 
     @filter.command("nc_main")
