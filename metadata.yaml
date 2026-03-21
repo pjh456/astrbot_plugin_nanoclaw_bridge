@@ -4,6 +4,7 @@ version: 0.1.0
 author: pjh456
 license: MIT
 homepage: https://github.com/pjh456/astrbot_plugin_nanoclaw_bridge
+repo: https://github.com/pjh456/astrbot_plugin_nanoclaw_bridge
 
 # astrbot plugin runtime
 astrbot:
