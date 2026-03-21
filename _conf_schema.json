@@ -25,6 +25,11 @@
     "description": "Prefix used in command mode",
     "default": "/nc "
   },
+  "block_astrbot_on_command": {
+    "type": "bool",
+    "description": "Stop AstrBot default reply when /nc command is used",
+    "default": true
+  },
   "ignore_self": {
     "type": "bool",
     "description": "Ignore messages sent by the bot itself",

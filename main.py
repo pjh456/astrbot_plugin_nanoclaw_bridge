@@ -48,6 +48,9 @@ class NanoClawBridge(Star):
         self.token: str = cfg.get("nanoclaw_token", "")
         self.forward_mode: str = cfg.get("forward_mode", "all")
         self.command_prefix: str = cfg.get("command_prefix", "/nc ")
+        self.block_astrbot_on_command: bool = bool(
+            cfg.get("block_astrbot_on_command", True)
+        )
         self.ignore_self: bool = bool(cfg.get("ignore_self", True))
         self.timeout_ms: int = int(cfg.get("timeout_ms", 15000))
 
@@ -194,6 +197,13 @@ class NanoClawBridge(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         content = event.message_str or ""
+        is_nc_command = content.startswith(self.command_prefix)
+        if is_nc_command and self.block_astrbot_on_command:
+            # Prevent AstrBot default response when /nc is used
+            try:
+                event.stop_event()
+            except Exception:
+                pass
         if not self._should_forward(event, content):
             return
 
@@ -228,6 +238,8 @@ class NanoClawBridge(Star):
         except Exception:
             umo = None
 
+        if is_nc_command:
+            content = content[len(self.command_prefix) :].lstrip()
         payload: Dict[str, Any] = {
             "chat_id": str(umo or session_id or "unknown"),
             "umo": str(umo) if umo is not None else None,

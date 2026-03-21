@@ -15,6 +15,7 @@ Forward AstrBot messages to NanoClaw via HTTP.
 - `nanoclaw_token`: Shared token for NanoClaw inbound auth (optional)
 - `forward_mode`: `all` | `command` | `mention`
 - `command_prefix`: prefix for command mode
+- `block_astrbot_on_command`: stop AstrBot default reply when `/nc` command is used
 - `ignore_self`: ignore bot's own messages
 - `timeout_ms`: HTTP timeout
 
@@ -42,6 +43,7 @@ The plugin posts JSON to NanoClaw:
 - `/nc_use` alias for `/nc_main`
 - `/nc_status` show current NanoClaw main control chat
 - `/nc_ping` ping NanoClaw control endpoint
+- `/nc ` (prefix) forward only to NanoClaw and block AstrBot reply
 {
   "chat_id": "<session_id>",
   "umo": "<unified_msg_origin>",
