@@ -1,0 +1,33 @@
+{
+  "nanoclaw_inbound_url": {
+    "type": "string",
+    "description": "NanoClaw inbound URL",
+    "default": "http://127.0.0.1:7801/astrbot/inbound"
+  },
+  "nanoclaw_token": {
+    "type": "string",
+    "description": "Shared token for NanoClaw inbound auth",
+    "default": ""
+  },
+  "forward_mode": {
+    "type": "string",
+    "description": "Forwarding mode",
+    "options": ["all", "command", "mention"],
+    "default": "all"
+  },
+  "command_prefix": {
+    "type": "string",
+    "description": "Prefix used in command mode",
+    "default": "/nc "
+  },
+  "ignore_self": {
+    "type": "bool",
+    "description": "Ignore messages sent by the bot itself",
+    "default": true
+  },
+  "timeout_ms": {
+    "type": "int",
+    "description": "HTTP timeout (ms)",
+    "default": 15000
+  }
+}

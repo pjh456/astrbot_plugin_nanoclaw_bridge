@@ -1,0 +1,13 @@
+name: nanoclaw_bridge
+description: Forward AstrBot messages to NanoClaw
+version: 0.1.0
+author: pjh456
+license: MIT
+homepage: https://github.com/pjh456/astrbot_plugin_nanoclaw_bridge
+
+# astrbot plugin runtime
+astrbot:
+  min_version: 3.4.0
+
+# entry file
+entry: main.py
