@@ -95,7 +95,7 @@ class NanoClawBridge(Star):
         except Exception as exc:
             logger.warning(f"NanoClaw inbound error: {exc}")
 
-    async def _post_control(self, payload: Dict[str, Any]) -> None:
+    async def _post_control(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -105,8 +105,14 @@ class NanoClawBridge(Star):
                 logger.warning(
                     f"NanoClaw control failed {resp.status_code}: {resp.text}"
                 )
+                return None
+            try:
+                return resp.json()
+            except Exception:
+                return None
         except Exception as exc:
             logger.warning(f"NanoClaw control error: {exc}")
+            return None
 
     @filter.command("nc_main")
     async def cmd_set_main(self, event: AstrMessageEvent):
@@ -144,6 +150,20 @@ class NanoClawBridge(Star):
             "sender_name": sender_name or None,
         }
         await self._post_control(payload)
+
+    @filter.command("nc_status")
+    async def cmd_status(self, event: AstrMessageEvent):
+        payload: Dict[str, Any] = {"action": "status", "chat_id": "status"}
+        data = await self._post_control(payload)
+        if not data or not data.get("ok"):
+            yield event.plain_result("NanoClaw 状态获取失败。")
+            return
+        main = data.get("main")
+        if not main:
+            yield event.plain_result("NanoClaw 尚未设置主控会话。")
+            return
+        msg = f"当前主控: {main.get('name')} ({main.get('jid')})"
+        yield event.plain_result(msg)
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):

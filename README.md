@@ -40,6 +40,7 @@ The plugin posts JSON to NanoClaw:
 
 - `/nc_main` set current chat as NanoClaw main control
 - `/nc_use` alias for `/nc_main`
+- `/nc_status` show current NanoClaw main control chat
 {
   "chat_id": "<session_id>",
   "umo": "<unified_msg_origin>",
