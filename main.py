@@ -175,6 +175,22 @@ class NanoClawBridge(Star):
         msg = f"当前主控: {main.get('name')} ({main.get('jid')})"
         yield event.plain_result(msg)
 
+    @filter.command("nc_ping")
+    async def cmd_ping(self, event: AstrMessageEvent):
+        start = asyncio.get_event_loop().time()
+        payload: Dict[str, Any] = {"action": "status", "chat_id": "ping"}
+        data = await self._post_control(payload)
+        elapsed_ms = int((asyncio.get_event_loop().time() - start) * 1000)
+        if not data or not data.get("ok"):
+            yield event.plain_result(f"NanoClaw ping 失败（{elapsed_ms}ms）")
+            return
+        main = data.get("main")
+        if not main:
+            yield event.plain_result(f"NanoClaw ping OK（{elapsed_ms}ms），未设置主控")
+            return
+        msg = f"NanoClaw ping OK（{elapsed_ms}ms），主控: {main.get('name')} ({main.get('jid')})"
+        yield event.plain_result(msg)
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         content = event.message_str or ""
