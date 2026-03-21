@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from astrbot.api import logger
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 
@@ -34,9 +34,9 @@ def _derive_control_url(inbound_url: str) -> str:
     "0.1.0",
 )
 class NanoClawBridge(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
-        cfg = context.get_config()
+        cfg = config
 
         self.inbound_url: str = cfg.get("nanoclaw_inbound_url", DEFAULT_INBOUND_URL)
         raw_control_url = cfg.get("nanoclaw_control_url", "")
