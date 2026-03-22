@@ -31,7 +31,7 @@ def _derive_control_url(inbound_url: str) -> str:
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.3",
+    "0.1.4",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -76,6 +76,9 @@ class NanoClawBridge(Star):
 
     def _should_forward(self, event: AstrMessageEvent, content: str) -> bool:
         if not content:
+            return False
+        # Never forward slash-commands (system/plugin commands)
+        if content.startswith("/"):
             return False
         if content.startswith("/nc_main") or content.startswith("/nc_use"):
             return False

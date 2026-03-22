@@ -19,6 +19,9 @@ Forward AstrBot messages to NanoClaw via HTTP.
 - `ignore_self`: ignore bot's own messages
 - `timeout_ms`: HTTP timeout
 
+Notes:
+- Slash commands (messages starting with `/`) are never forwarded to NanoClaw to avoid double-replies on system/plugin commands.
+
 ## NanoClaw side
 
 Make sure NanoClaw has the AstrBot HTTP channel enabled and configured:
