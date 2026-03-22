@@ -20,7 +20,7 @@ Forward AstrBot messages to NanoClaw via HTTP.
 - `timeout_ms`: HTTP timeout
 
 Notes:
-- Command messages are never forwarded to NanoClaw to avoid double-replies on system/plugin commands.
+- Command messages are never forwarded to NanoClaw. Detection uses AstrBot's activated handlers and CommandFilter/CommandGroupFilter.
 
 ## NanoClaw side
 
