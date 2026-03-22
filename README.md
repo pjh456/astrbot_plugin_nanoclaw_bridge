@@ -15,8 +15,7 @@ Forward AstrBot messages to NanoClaw via HTTP.
 - `nanoclaw_token`: Shared token for NanoClaw inbound auth (optional)
 - `forward_mode`: `all` | `command` | `mention`
 - `command_prefix`: prefix for command mode
-- `block_astrbot_on_command`: stop AstrBot default reply when `/nc` command is used
-- `block_astrbot_on_mention`: stop AstrBot default reply when mention-mode forwarding triggers
+- `block_astrbot_on_forward`: stop AstrBot default reply whenever forwarding triggers
 - `ignore_self`: ignore bot's own messages
 - `timeout_ms`: HTTP timeout
 

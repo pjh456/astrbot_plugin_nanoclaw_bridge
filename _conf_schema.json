@@ -25,15 +25,10 @@
     "description": "Prefix used in command mode",
     "default": "/nc "
   },
-  "block_astrbot_on_command": {
+  "block_astrbot_on_forward": {
     "type": "bool",
-    "description": "Stop AstrBot default reply when /nc command is used",
+    "description": "Stop AstrBot default reply whenever NanoClaw forwarding is triggered",
     "default": true
-  },
-  "block_astrbot_on_mention": {
-    "type": "bool",
-    "description": "Stop AstrBot default reply when mention-mode forwarding is triggered",
-    "default": false
   },
   "ignore_self": {
     "type": "bool",
