@@ -31,7 +31,7 @@ def _derive_control_url(inbound_url: str) -> str:
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.0",
+    "0.1.1",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -193,6 +193,30 @@ class NanoClawBridge(Star):
             return
         msg = f"NanoClaw ping OK（{elapsed_ms}ms），主控: {main.get('name')} ({main.get('jid')})"
         yield event.plain_result(msg)
+
+    @filter.command("nc_reset")
+    async def cmd_reset(self, event: AstrMessageEvent):
+        try:
+            msg_obj = event.message_obj
+            session_id = getattr(msg_obj, "session_id", None)
+        except Exception:
+            session_id = None
+
+        try:
+            umo = event.unified_msg_origin
+        except Exception:
+            umo = None
+
+        payload: Dict[str, Any] = {
+            "action": "reset_session",
+            "chat_id": str(umo or session_id or "unknown"),
+            "umo": str(umo) if umo is not None else None,
+        }
+        data = await self._post_control(payload)
+        if not data or not data.get("ok"):
+            yield event.plain_result("NanoClaw 会话重置失败。")
+            return
+        yield event.plain_result("NanoClaw 会话已重置。")
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
