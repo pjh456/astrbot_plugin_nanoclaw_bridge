@@ -31,7 +31,7 @@ def _derive_control_url(inbound_url: str) -> str:
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.4",
+    "0.1.5",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -53,6 +53,7 @@ class NanoClawBridge(Star):
         )
         self.ignore_self: bool = bool(cfg.get("ignore_self", True))
         self.timeout_ms: int = int(cfg.get("timeout_ms", 15000))
+        self._command_names = self._load_command_names()
 
         # Avoid container-level proxy envs breaking local calls
         self._client = httpx.AsyncClient(
@@ -74,11 +75,53 @@ class NanoClawBridge(Star):
             return False
         return str(self_id) == str(sender_id)
 
+    def _load_command_names(self) -> set:
+        names = set()
+        cm = getattr(self.context, "command_manager", None)
+        if cm is None:
+            cm = getattr(self.context, "commands", None)
+        if cm is None:
+            return names
+
+        for attr in ("command_dict", "commands", "_commands", "registry", "_registry", "command_map"):
+            data = getattr(cm, attr, None)
+            if isinstance(data, dict):
+                for key in data.keys():
+                    if key:
+                        names.add(str(key))
+                break
+            if isinstance(data, (list, tuple)):
+                for item in data:
+                    name = getattr(item, "name", None) or getattr(item, "command", None)
+                    if name:
+                        names.add(str(name))
+                break
+        return names
+
+    def _is_command_event(self, event: AstrMessageEvent, content: str) -> bool:
+        if getattr(event, "is_command", False) or getattr(event, "is_command_event", False):
+            return True
+        cmd = getattr(event, "command", None) or getattr(event, "command_name", None)
+        if cmd:
+            return True
+
+        # Fallback: match against known command names if available
+        if not self._command_names:
+            return False
+        text = content.strip()
+        if not text:
+            return False
+        # strip common prefixes
+        if text[0] in ("/", "!", ".", "！", "。"):
+            text = text[1:].lstrip()
+        first = text.split()[0]
+        return first in self._command_names
+
     def _should_forward(self, event: AstrMessageEvent, content: str) -> bool:
         if not content:
             return False
-        # Never forward slash-commands (system/plugin commands)
-        if content.startswith("/"):
+        # Never forward commands (system/plugin commands)
+        if self._is_command_event(event, content):
             return False
         if content.startswith("/nc_main") or content.startswith("/nc_use"):
             return False

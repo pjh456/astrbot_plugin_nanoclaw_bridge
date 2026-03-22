@@ -20,7 +20,7 @@ Forward AstrBot messages to NanoClaw via HTTP.
 - `timeout_ms`: HTTP timeout
 
 Notes:
-- Slash commands (messages starting with `/`) are never forwarded to NanoClaw to avoid double-replies on system/plugin commands.
+- Command messages are never forwarded to NanoClaw to avoid double-replies on system/plugin commands.
 
 ## NanoClaw side
 
