@@ -30,6 +30,11 @@
     "description": "Stop AstrBot default reply when /nc command is used",
     "default": true
   },
+  "block_astrbot_on_mention": {
+    "type": "bool",
+    "description": "Stop AstrBot default reply when mention-mode forwarding is triggered",
+    "default": false
+  },
   "ignore_self": {
     "type": "bool",
     "description": "Ignore messages sent by the bot itself",

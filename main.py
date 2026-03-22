@@ -31,7 +31,7 @@ def _derive_control_url(inbound_url: str) -> str:
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.1",
+    "0.1.2",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -50,6 +50,9 @@ class NanoClawBridge(Star):
         self.command_prefix: str = cfg.get("command_prefix", "/nc ")
         self.block_astrbot_on_command: bool = bool(
             cfg.get("block_astrbot_on_command", True)
+        )
+        self.block_astrbot_on_mention: bool = bool(
+            cfg.get("block_astrbot_on_mention", False)
         )
         self.ignore_self: bool = bool(cfg.get("ignore_self", True))
         self.timeout_ms: int = int(cfg.get("timeout_ms", 15000))
@@ -222,8 +225,18 @@ class NanoClawBridge(Star):
     async def on_message(self, event: AstrMessageEvent):
         content = event.message_str or ""
         is_nc_command = content.startswith(self.command_prefix)
+        is_at = bool(getattr(event, "is_at_or_wake_command", False))
         if is_nc_command and self.block_astrbot_on_command:
             # Prevent AstrBot default response when /nc is used
+            try:
+                event.stop_event()
+            except Exception:
+                pass
+        if (
+            self.forward_mode.lower().strip() == "mention"
+            and is_at
+            and self.block_astrbot_on_mention
+        ):
             try:
                 event.stop_event()
             except Exception:
