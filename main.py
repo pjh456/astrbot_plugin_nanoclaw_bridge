@@ -14,6 +14,150 @@ from astrbot.core.star.filter.command_group import CommandGroupFilter
 DEFAULT_INBOUND_URL = "http://127.0.0.1:7801/astrbot/inbound"
 
 
+def _to_str(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return str(value)
+    except Exception:
+        return ""
+
+
+def _pick_first(*values: Any) -> str:
+    for value in values:
+        s = _to_str(value).strip()
+        if s:
+            return s
+    return ""
+
+
+def _get_attr(obj: Any, key: str) -> Any:
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
+
+
+def _extract_sender_fields(event: AstrMessageEvent) -> Dict[str, str]:
+    sender_id = ""
+    sender_name = ""
+    sender_nickname = ""
+    sender_username = ""
+    sender_card = ""
+
+    try:
+        sender_id = event.get_sender_id() or ""
+    except Exception:
+        sender_id = ""
+    try:
+        sender_name = event.get_sender_name() or ""
+    except Exception:
+        sender_name = ""
+
+    try:
+        sender_obj = getattr(event.message_obj, "sender", None)
+    except Exception:
+        sender_obj = None
+
+    sender_id = _pick_first(
+        sender_id,
+        _get_attr(sender_obj, "user_id"),
+        _get_attr(sender_obj, "id"),
+    )
+    sender_nickname = _pick_first(
+        sender_name,
+        _get_attr(sender_obj, "nickname"),
+        _get_attr(sender_obj, "nick"),
+        _get_attr(sender_obj, "display_name"),
+    )
+    sender_username = _pick_first(
+        _get_attr(sender_obj, "username"),
+        _get_attr(sender_obj, "user_name"),
+        _get_attr(sender_obj, "name"),
+    )
+    sender_card = _pick_first(
+        _get_attr(sender_obj, "card"),
+    )
+
+    # Try raw message fallback (common across adapters)
+    try:
+        raw = getattr(event.message_obj, "raw_message", None)
+    except Exception:
+        raw = None
+
+    for root in (raw, _get_attr(raw, "sender"), _get_attr(raw, "author")):
+        if not root:
+            continue
+        sender_id = _pick_first(sender_id, _get_attr(root, "user_id"), _get_attr(root, "id"))
+        sender_nickname = _pick_first(
+            sender_nickname,
+            _get_attr(root, "card"),
+            _get_attr(root, "nickname"),
+            _get_attr(root, "nick"),
+            _get_attr(root, "display_name"),
+        )
+        sender_username = _pick_first(
+            sender_username,
+            _get_attr(root, "username"),
+            _get_attr(root, "user_name"),
+            _get_attr(root, "name"),
+        )
+
+    sender_display = _pick_first(
+        sender_nickname,
+        sender_username,
+        sender_card,
+        sender_id,
+    )
+
+    return {
+        "sender_id": sender_id,
+        "sender_name": sender_display,
+        "sender_nickname": sender_nickname,
+        "sender_username": sender_username,
+        "sender_card": sender_card,
+    }
+
+
+def _extract_group_fields(event: AstrMessageEvent) -> Dict[str, str]:
+    group_id = ""
+    group_name = ""
+
+    try:
+        msg_obj = event.message_obj
+    except Exception:
+        msg_obj = None
+
+    group_id = _pick_first(
+        _get_attr(msg_obj, "group_id"),
+        _get_attr(_get_attr(msg_obj, "group"), "group_id"),
+    )
+    group_name = _pick_first(
+        _get_attr(_get_attr(msg_obj, "group"), "group_name"),
+    )
+
+    try:
+        raw = getattr(event.message_obj, "raw_message", None)
+    except Exception:
+        raw = None
+    group_name = _pick_first(
+        group_name,
+        _get_attr(raw, "group_name"),
+        _get_attr(raw, "guild_name"),
+        _get_attr(raw, "channel_name"),
+        _get_attr(raw, "name"),
+        _get_attr(raw, "title"),
+    )
+
+    return {
+        "group_id": group_id,
+        "group_name": group_name,
+    }
+
+
 def _to_iso(ts: Optional[int]) -> str:
     if ts is None:
         return datetime.now(timezone.utc).isoformat()
@@ -162,17 +306,16 @@ class NanoClawBridge(Star):
         except Exception:
             umo = None
 
-        sender_name = ""
-        try:
-            sender_name = event.get_sender_name() or ""
-        except Exception:
-            sender_name = ""
+        sender_fields = _extract_sender_fields(event)
+        group_fields = _extract_group_fields(event)
+        sender_name = sender_fields.get("sender_name", "")
+        group_name = group_fields.get("group_name", "")
 
         payload: Dict[str, Any] = {
             "action": "set_main",
             "chat_id": str(umo or session_id or "unknown"),
             "umo": str(umo) if umo is not None else None,
-            "group_name": sender_name or None,
+            "group_name": group_name or sender_name or None,
             "sender_name": sender_name or None,
         }
         await self._post_control(payload)
@@ -244,16 +387,9 @@ class NanoClawBridge(Star):
             except Exception:
                 pass
 
-        sender_name = ""
-        sender_id = ""
-        try:
-            sender_name = event.get_sender_name() or ""
-        except Exception:
-            sender_name = ""
-        try:
-            sender_id = event.get_sender_id() or ""
-        except Exception:
-            sender_id = ""
+        sender_fields = _extract_sender_fields(event)
+        sender_id = sender_fields.get("sender_id", "")
+        sender_name = sender_fields.get("sender_name", "")
 
         if self.ignore_self and sender_id and self._is_self_message(event, sender_id):
             return
@@ -264,16 +400,35 @@ class NanoClawBridge(Star):
             message_id = getattr(msg_obj, "message_id", None)
             timestamp = getattr(msg_obj, "timestamp", None)
             group_id = getattr(msg_obj, "group_id", None)
+            self_id = getattr(msg_obj, "self_id", None)
         except Exception:
             session_id = None
             message_id = None
             timestamp = None
             group_id = None
+            self_id = None
 
         try:
             umo = event.unified_msg_origin
         except Exception:
             umo = None
+
+        group_fields = _extract_group_fields(event)
+        group_name = group_fields.get("group_name", "")
+        group_id = _pick_first(group_id, group_fields.get("group_id", ""))
+
+        try:
+            platform_name = event.get_platform_name()
+        except Exception:
+            platform_name = ""
+        try:
+            platform_id = event.get_platform_id()
+        except Exception:
+            platform_id = ""
+
+        is_from_me = False
+        if self_id and sender_id:
+            is_from_me = str(self_id) == str(sender_id)
 
         if is_nc_command:
             content = content[len(self.command_prefix) :].lstrip()
@@ -282,10 +437,19 @@ class NanoClawBridge(Star):
             "umo": str(umo) if umo is not None else None,
             "sender_id": sender_id,
             "sender_name": sender_name or sender_id or "unknown",
+            "sender_nickname": sender_fields.get("sender_nickname") or None,
+            "sender_username": sender_fields.get("sender_username") or None,
+            "sender_card": sender_fields.get("sender_card") or None,
             "content": content,
             "timestamp": _to_iso(timestamp),
             "is_group": bool(group_id),
+            "group_id": str(group_id) if group_id else None,
+            "group_name": group_name or None,
             "message_id": str(message_id) if message_id is not None else None,
+            "platform_name": platform_name or None,
+            "platform_id": platform_id or None,
+            "session_id": str(session_id) if session_id is not None else None,
+            "is_from_me": is_from_me,
         }
 
         await self._post(payload)
