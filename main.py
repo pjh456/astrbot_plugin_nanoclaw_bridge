@@ -162,6 +162,67 @@ def _extract_group_fields(event: AstrMessageEvent) -> Dict[str, str]:
     }
 
 
+def _extract_sender_permissions(event: AstrMessageEvent) -> Dict[str, Any]:
+    permissions: Dict[str, Any] = {}
+
+    astrbot_role = _to_str(getattr(event, "role", "")).strip().lower()
+    if astrbot_role:
+        permissions["astrbot_role"] = astrbot_role
+
+    try:
+        is_astrbot_admin = bool(event.is_admin())
+    except Exception:
+        is_astrbot_admin = astrbot_role == "admin"
+    if is_astrbot_admin:
+        permissions["is_astrbot_admin"] = True
+
+    try:
+        sender_obj = getattr(event.message_obj, "sender", None)
+    except Exception:
+        sender_obj = None
+    try:
+        raw = getattr(event.message_obj, "raw_message", None)
+    except Exception:
+        raw = None
+
+    platform_role = ""
+    platform_title = ""
+    for root in (sender_obj, _get_attr(raw, "sender"), _get_attr(raw, "author")):
+        if not root:
+            continue
+        platform_role = _pick_first(
+            platform_role,
+            _get_attr(root, "role"),
+            _get_attr(root, "sender_role"),
+            _get_attr(root, "member_role"),
+        )
+        platform_title = _pick_first(
+            platform_title,
+            _get_attr(root, "title"),
+            _get_attr(root, "role_name"),
+            _get_attr(root, "honor"),
+        )
+
+    normalized_platform_role = platform_role.strip().lower()
+    if normalized_platform_role:
+        permissions["platform_role"] = normalized_platform_role
+    elif platform_role:
+        permissions["platform_role"] = platform_role
+    if platform_title:
+        permissions["platform_title"] = platform_title
+
+    owner_roles = {"owner", "group_owner", "creator", "群主"}
+    admin_roles = {"admin", "administrator", "管理员"}
+    raw_role = normalized_platform_role or platform_role
+    if raw_role in owner_roles:
+        permissions["is_platform_owner"] = True
+        permissions["is_platform_admin"] = True
+    elif raw_role in admin_roles:
+        permissions["is_platform_admin"] = True
+
+    return permissions
+
+
 def _to_iso(ts: Optional[int]) -> str:
     if ts is None:
         return datetime.now(timezone.utc).isoformat()
@@ -429,6 +490,7 @@ def _extract_reply(event: AstrMessageEvent, segments: List[Dict[str, Any]]) -> O
 def _build_metadata(
     event: AstrMessageEvent,
     sender_fields: Dict[str, str],
+    sender_permissions: Dict[str, Any],
     group_fields: Dict[str, str],
     segments: List[Dict[str, Any]],
     reply: Optional[Dict[str, Any]],
@@ -463,6 +525,8 @@ def _build_metadata(
     sender_profile = {k: v for k, v in sender_profile.items() if v}
     if sender_profile:
         metadata["sender_profile"] = sender_profile
+    if sender_permissions:
+        metadata["sender_permissions"] = sender_permissions
 
     try:
         is_at = getattr(event, "is_at_or_wake_command", False)
@@ -483,7 +547,7 @@ def _build_metadata(
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.7",
+    "0.1.8",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -694,6 +758,7 @@ class NanoClawBridge(Star):
                 pass
 
         sender_fields = _extract_sender_fields(event)
+        sender_permissions = _extract_sender_permissions(event)
         sender_id = sender_fields.get("sender_id", "")
         sender_name = sender_fields.get("sender_name", "")
 
@@ -737,6 +802,7 @@ class NanoClawBridge(Star):
         metadata = _build_metadata(
             event,
             sender_fields,
+            sender_permissions,
             group_fields,
             segments,
             reply,
