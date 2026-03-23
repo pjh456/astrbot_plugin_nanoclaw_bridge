@@ -2,6 +2,11 @@
 
 Forward AstrBot messages to NanoClaw via HTTP.
 
+The bridge forwards more than plain `message_str`: it also includes structured
+metadata such as reply/quote context, message segments, sender profile, and
+platform/session identifiers so NanoClaw can see closer-to-native AstrBot LLM
+context.
+
 ## Install
 
 1. Copy this repo into your AstrBot plugins directory.
@@ -55,7 +60,29 @@ The plugin posts JSON to NanoClaw:
   "content": "<message_str>",
   "timestamp": "<ISO8601>",
   "is_group": true,
-  "message_id": "<message_id>"
+  "message_id": "<message_id>",
+  "metadata": {
+    "source": "astrbot",
+    "umo": "<unified_msg_origin>",
+    "platform_name": "<platform_name>",
+    "platform_id": "<platform_id>",
+    "session_id": "<session_id>",
+    "group_name": "<group_name>",
+    "sender_profile": {
+      "nickname": "<sender_nickname>",
+      "username": "<sender_username>",
+      "card": "<sender_card>"
+    },
+    "reply": {
+      "message_id": "<quoted_message_id>",
+      "sender_name": "<quoted_sender>",
+      "content": "<quoted_text>"
+    },
+    "segments": [
+      { "type": "reply", "id": "<quoted_message_id>" },
+      { "type": "text", "text": "<segment_text>" }
+    ]
+  }
 }
 ```
 

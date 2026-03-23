@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 
@@ -131,18 +131,22 @@ def _extract_group_fields(event: AstrMessageEvent) -> Dict[str, str]:
     except Exception:
         msg_obj = None
 
-    group_id = _pick_first(
-        _get_attr(msg_obj, "group_id"),
-        _get_attr(_get_attr(msg_obj, "group"), "group_id"),
-    )
-    group_name = _pick_first(
-        _get_attr(_get_attr(msg_obj, "group"), "group_name"),
-    )
-
     try:
         raw = getattr(event.message_obj, "raw_message", None)
     except Exception:
         raw = None
+
+    group_id = _pick_first(
+        _get_attr(msg_obj, "group_id"),
+        _get_attr(_get_attr(msg_obj, "group"), "group_id"),
+        _get_attr(_get_attr(msg_obj, "group"), "id"),
+        _get_attr(raw, "group_id"),
+        _get_attr(raw, "guild_id"),
+        _get_attr(raw, "channel_id"),
+    )
+    group_name = _pick_first(
+        _get_attr(_get_attr(msg_obj, "group"), "group_name"),
+    )
     group_name = _pick_first(
         group_name,
         _get_attr(raw, "group_name"),
@@ -173,11 +177,313 @@ def _derive_control_url(inbound_url: str) -> str:
     return inbound_url.rstrip("/") + "/astrbot/control"
 
 
+def _normalize_value(value: Any, depth: int = 0) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8", errors="replace")
+        except Exception:
+            return repr(value)
+    if depth >= 3:
+        return _to_str(value)
+    if isinstance(value, (list, tuple, set)):
+        items = []
+        for item in value:
+            normalized = _normalize_value(item, depth + 1)
+            if normalized not in (None, "", [], {}):
+                items.append(normalized)
+        return items
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for k, v in value.items():
+            key = _to_str(k).strip()
+            if not key or key.startswith("_"):
+                continue
+            normalized = _normalize_value(v, depth + 1)
+            if normalized not in (None, "", [], {}):
+                result[key] = normalized
+        return result
+
+    result: Dict[str, Any] = {}
+    for key in (
+        "type",
+        "id",
+        "message_id",
+        "user_id",
+        "group_id",
+        "nickname",
+        "username",
+        "card",
+        "name",
+        "title",
+        "text",
+        "content",
+        "url",
+        "file",
+        "path",
+        "data",
+        "time",
+        "timestamp",
+    ):
+        try:
+            raw = getattr(value, key, None)
+        except Exception:
+            raw = None
+        normalized = _normalize_value(raw, depth + 1)
+        if normalized not in (None, "", [], {}):
+            result[key] = normalized
+    return result or _to_str(value)
+
+
+def _iter_message_chain(message: Any) -> List[Any]:
+    if message is None:
+        return []
+    if isinstance(message, (list, tuple)):
+        return list(message)
+    try:
+        return list(message)
+    except Exception:
+        return []
+
+
+def _normalize_segment(segment: Any) -> Dict[str, Any]:
+    segment_type = _pick_first(
+        _get_attr(segment, "type"),
+        _get_attr(segment, "component_type"),
+        getattr(getattr(segment, "__class__", None), "__name__", ""),
+    ).lower() or "unknown"
+
+    result: Dict[str, Any] = {"type": segment_type}
+    for key in (
+        "id",
+        "message_id",
+        "user_id",
+        "qq",
+        "name",
+        "title",
+        "text",
+        "content",
+        "url",
+        "file",
+        "path",
+        "image",
+        "voice",
+        "video",
+        "emoji_id",
+        "face_id",
+        "code",
+        "data",
+    ):
+        normalized = _normalize_value(_get_attr(segment, key))
+        if normalized not in (None, "", [], {}):
+            result[key] = normalized
+
+    if len(result) == 1:
+        normalized = _normalize_value(segment)
+        if isinstance(normalized, dict):
+            for key, value in normalized.items():
+                if key == "type":
+                    continue
+                result[key] = value
+    return result
+
+
+def _extract_message_segments(event: AstrMessageEvent) -> List[Dict[str, Any]]:
+    try:
+        msg_obj = event.message_obj
+    except Exception:
+        msg_obj = None
+
+    roots = [
+        _get_attr(msg_obj, "message"),
+        _get_attr(_get_attr(msg_obj, "raw_message"), "message"),
+        _get_attr(_get_attr(msg_obj, "raw_message"), "messages"),
+        _get_attr(_get_attr(msg_obj, "raw_message"), "message_chain"),
+    ]
+
+    for root in roots:
+        chain = _iter_message_chain(root)
+        if chain:
+            return [_normalize_segment(item) for item in chain]
+    return []
+
+
+def _extract_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        parts = [_extract_text(item) for item in value]
+        return " ".join(part for part in parts if part).strip()
+    if isinstance(value, dict):
+        if isinstance(value.get("text"), str) and value.get("text"):
+            return value["text"]
+        if isinstance(value.get("content"), str) and value.get("content"):
+            return value["content"]
+        if isinstance(value.get("message"), (str, list, tuple, dict)):
+            return _extract_text(value.get("message"))
+        return ""
+
+    for key in ("text", "content", "message", "raw_message"):
+        extracted = _extract_text(_get_attr(value, key))
+        if extracted:
+            return extracted
+    return ""
+
+
+def _summarize_reply(candidate: Any) -> Optional[Dict[str, Any]]:
+    if candidate is None:
+        return None
+
+    sender = _get_attr(candidate, "sender") or _get_attr(candidate, "author")
+    message_id = _pick_first(
+        _get_attr(candidate, "message_id"),
+        _get_attr(candidate, "id"),
+        _get_attr(candidate, "message_seq"),
+        _get_attr(candidate, "msg_id"),
+    )
+    sender_id = _pick_first(
+        _get_attr(candidate, "sender_id"),
+        _get_attr(candidate, "user_id"),
+        _get_attr(sender, "user_id"),
+        _get_attr(sender, "id"),
+    )
+    sender_name = _pick_first(
+        _get_attr(candidate, "sender_name"),
+        _get_attr(candidate, "nickname"),
+        _get_attr(sender, "card"),
+        _get_attr(sender, "nickname"),
+        _get_attr(sender, "name"),
+        sender_id,
+    )
+    content = _extract_text(candidate)
+    timestamp_raw = (
+        _get_attr(candidate, "timestamp")
+        or _get_attr(candidate, "time")
+        or _get_attr(candidate, "time_seconds")
+    )
+
+    reply: Dict[str, Any] = {}
+    if message_id:
+        reply["message_id"] = message_id
+    if sender_id:
+        reply["sender_id"] = sender_id
+    if sender_name:
+        reply["sender_name"] = sender_name
+    if content:
+        reply["content"] = content
+    if isinstance(timestamp_raw, (int, float)):
+        reply["timestamp"] = _to_iso(int(timestamp_raw))
+    elif timestamp_raw:
+        reply["timestamp"] = _to_str(timestamp_raw)
+
+    normalized = _normalize_value(candidate)
+    if isinstance(normalized, dict):
+        compact = {
+            key: value
+            for key, value in normalized.items()
+            if key not in {"text", "content", "message", "raw_message"}
+        }
+        if compact:
+            reply["raw"] = compact
+
+    return reply or None
+
+
+def _extract_reply(event: AstrMessageEvent, segments: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    try:
+        msg_obj = event.message_obj
+    except Exception:
+        msg_obj = None
+
+    raw = _get_attr(msg_obj, "raw_message")
+    candidates = [
+        _get_attr(msg_obj, "reply"),
+        _get_attr(msg_obj, "quote"),
+        _get_attr(raw, "reply"),
+        _get_attr(raw, "quote"),
+        _get_attr(raw, "reply_to"),
+        _get_attr(raw, "quoted_message"),
+        _get_attr(raw, "reply_message"),
+        _get_attr(raw, "message_reference"),
+    ]
+
+    for candidate in candidates:
+        reply = _summarize_reply(candidate)
+        if reply:
+            return reply
+
+    for segment in segments:
+        if segment.get("type") not in {"reply", "quote", "reference", "source"}:
+            continue
+        reply = _summarize_reply(segment)
+        if reply:
+            return reply
+    return None
+
+
+def _build_metadata(
+    event: AstrMessageEvent,
+    sender_fields: Dict[str, str],
+    group_fields: Dict[str, str],
+    segments: List[Dict[str, Any]],
+    reply: Optional[Dict[str, Any]],
+    platform_name: str,
+    platform_id: str,
+    session_id: Any,
+    umo: Any,
+) -> Dict[str, Any]:
+    metadata: Dict[str, Any] = {
+        "source": "astrbot",
+        "chat_id": str(umo or session_id or "unknown"),
+        "is_group": bool(group_fields.get("group_id")),
+    }
+    if umo is not None:
+        metadata["umo"] = str(umo)
+    if platform_name:
+        metadata["platform_name"] = platform_name
+    if platform_id:
+        metadata["platform_id"] = platform_id
+    if session_id is not None:
+        metadata["session_id"] = str(session_id)
+    if group_fields.get("group_id"):
+        metadata["group_id"] = group_fields["group_id"]
+    if group_fields.get("group_name"):
+        metadata["group_name"] = group_fields["group_name"]
+
+    sender_profile = {
+        "nickname": sender_fields.get("sender_nickname") or None,
+        "username": sender_fields.get("sender_username") or None,
+        "card": sender_fields.get("sender_card") or None,
+    }
+    sender_profile = {k: v for k, v in sender_profile.items() if v}
+    if sender_profile:
+        metadata["sender_profile"] = sender_profile
+
+    try:
+        is_at = getattr(event, "is_at_or_wake_command", False)
+    except Exception:
+        is_at = False
+    if is_at:
+        metadata["is_at_or_wake_command"] = True
+
+    if reply:
+        metadata["reply"] = reply
+    if segments:
+        metadata["segments"] = segments
+
+    return metadata
+
+
 @register(
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.6",
+    "0.1.7",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -426,6 +732,20 @@ class NanoClawBridge(Star):
         except Exception:
             platform_id = ""
 
+        segments = _extract_message_segments(event)
+        reply = _extract_reply(event, segments)
+        metadata = _build_metadata(
+            event,
+            sender_fields,
+            group_fields,
+            segments,
+            reply,
+            platform_name,
+            platform_id,
+            session_id,
+            umo,
+        )
+
         is_from_me = False
         if self_id and sender_id:
             is_from_me = str(self_id) == str(sender_id)
@@ -450,6 +770,7 @@ class NanoClawBridge(Star):
             "platform_id": platform_id or None,
             "session_id": str(session_id) if session_id is not None else None,
             "is_from_me": is_from_me,
+            "metadata": metadata,
         }
 
         await self._post(payload)
