@@ -54,6 +54,7 @@ The plugin posts JSON to NanoClaw:
 - `/nc_use` alias for `/nc_main`
 - `/nc_status` show current NanoClaw main control chat
 - `/nc_ping` ping NanoClaw control endpoint
+- `/nc_diag` run NanoClaw self-check and show model/config summary
 - `/nc ` (prefix) forward only to NanoClaw and block AstrBot reply
 {
   "chat_id": "<session_id>",

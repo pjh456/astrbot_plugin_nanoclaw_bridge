@@ -243,6 +243,100 @@ def _derive_control_url(inbound_url: str) -> str:
     return inbound_url.rstrip("/") + "/astrbot/control"
 
 
+def _derive_health_url(inbound_url: str) -> str:
+    if inbound_url.endswith("/astrbot/inbound"):
+        return inbound_url[: -len("/astrbot/inbound")] + "/healthz"
+    return inbound_url.rstrip("/") + "/healthz"
+
+
+def _bool_label(value: Any) -> str:
+    return "已配置" if bool(value) else "未配置"
+
+
+def _format_diag_message(
+    health_ok: bool,
+    health_elapsed_ms: int,
+    diag_elapsed_ms: int,
+    data: Optional[Dict[str, Any]],
+    *,
+    inbound_url: str,
+    control_url: str,
+    forward_mode: str,
+    command_prefix: str,
+    block_astrbot_on_forward: bool,
+    ignore_self: bool,
+) -> str:
+    lines = ["NanoClaw 自检"]
+    health_line = (
+        f"健康检查: OK（{health_elapsed_ms}ms）"
+        if health_ok
+        else f"健康检查: 失败（{health_elapsed_ms}ms）"
+    )
+    lines.append(health_line)
+
+    if not data or not data.get("ok"):
+        lines.append(f"控制接口: 失败（{diag_elapsed_ms}ms）")
+        lines.append(f"inbound: {inbound_url}")
+        lines.append(f"control: {control_url}")
+        lines.append(
+            "插件配置: "
+            f"forward_mode={forward_mode}, "
+            f"command_prefix={command_prefix!r}, "
+            f"block_forward={str(block_astrbot_on_forward).lower()}, "
+            f"ignore_self={str(ignore_self).lower()}"
+        )
+        return "\n".join(lines)
+
+    lines.append(f"控制接口: OK（{diag_elapsed_ms}ms）")
+
+    main = data.get("main")
+    if isinstance(main, dict) and main.get("jid"):
+        lines.append(f"主控会话: {main.get('name')} ({main.get('jid')})")
+    else:
+        lines.append("主控会话: 未设置")
+
+    diag = data.get("diag") if isinstance(data.get("diag"), dict) else {}
+    channel = diag.get("channel") if isinstance(diag.get("channel"), dict) else {}
+    openapi = diag.get("openapi") if isinstance(diag.get("openapi"), dict) else {}
+    sessions = diag.get("sessions") if isinstance(diag.get("sessions"), dict) else {}
+    model = diag.get("model") if isinstance(diag.get("model"), dict) else {}
+
+    lines.append(
+        "NanoClaw HTTP: "
+        f"{channel.get('listenHost', '?')}:{channel.get('listenPort', '?')}, "
+        f"token {_bool_label(channel.get('tokenConfigured'))}"
+    )
+    lines.append(
+        "OpenAPI 回退: "
+        f"{openapi.get('apiBase', '?')}, "
+        f"key {_bool_label(openapi.get('apiKeyConfigured'))}"
+    )
+    lines.append(
+        "模型: "
+        f"{_to_str(model.get('model')).strip() or '未设置'} "
+        f"@ {_to_str(model.get('anthropicBaseUrl')).strip() or '默认'}"
+    )
+    lines.append(
+        "鉴权: "
+        f"{_to_str(model.get('authMode')).strip() or 'unknown'} "
+        f"(api_key={_bool_label(model.get('apiKeyConfigured'))}, "
+        f"oauth={_bool_label(model.get('oauthConfigured'))})"
+    )
+    lines.append(
+        f"已注册会话: {_to_str(sessions.get('registeredCount')).strip() or '0'}"
+    )
+    lines.append(
+        "插件配置: "
+        f"forward_mode={forward_mode}, "
+        f"command_prefix={command_prefix!r}, "
+        f"block_forward={str(block_astrbot_on_forward).lower()}, "
+        f"ignore_self={str(ignore_self).lower()}"
+    )
+    lines.append(f"inbound: {inbound_url}")
+    lines.append(f"control: {control_url}")
+    return "\n".join(lines)
+
+
 def _normalize_value(value: Any, depth: int = 0) -> Any:
     if value is None:
         return None
@@ -636,7 +730,7 @@ def _build_metadata(
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.2.2",
+    "0.2.3",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -650,6 +744,7 @@ class NanoClawBridge(Star):
             if isinstance(raw_control_url, str) and raw_control_url.strip()
             else _derive_control_url(self.inbound_url)
         )
+        self.health_url: str = _derive_health_url(self.inbound_url)
         self.token: str = cfg.get("nanoclaw_token", "")
         self.forward_mode: str = cfg.get("forward_mode", "all")
         self.command_prefix: str = cfg.get("command_prefix", "/nc ")
@@ -937,6 +1032,36 @@ class NanoClawBridge(Star):
             return
         msg = f"NanoClaw ping OK（{elapsed_ms}ms），主控: {main.get('name')} ({main.get('jid')})"
         yield event.plain_result(msg)
+
+    @filter.command("nc_diag")
+    async def cmd_diag(self, event: AstrMessageEvent):
+        health_ok = False
+        health_start = asyncio.get_event_loop().time()
+        try:
+            resp = await self._client.get(self.health_url)
+            health_ok = resp.status_code < 300
+        except Exception as exc:
+            logger.warning(f"NanoClaw health check error ({self.health_url}): {exc!r}")
+        health_elapsed_ms = int((asyncio.get_event_loop().time() - health_start) * 1000)
+
+        diag_start = asyncio.get_event_loop().time()
+        data = await self._post_control({"action": "diag", "chat_id": "diag"})
+        diag_elapsed_ms = int((asyncio.get_event_loop().time() - diag_start) * 1000)
+
+        yield event.plain_result(
+            _format_diag_message(
+                health_ok,
+                health_elapsed_ms,
+                diag_elapsed_ms,
+                data,
+                inbound_url=self.inbound_url,
+                control_url=self.control_url,
+                forward_mode=self.forward_mode,
+                command_prefix=self.command_prefix,
+                block_astrbot_on_forward=self.block_astrbot_on_forward,
+                ignore_self=self.ignore_self,
+            )
+        )
 
     @filter.command("nc_reset")
     async def cmd_reset(self, event: AstrMessageEvent):
