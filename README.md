@@ -22,6 +22,8 @@ closer-to-native AstrBot LLM context.
 - `command_prefix`: prefix for command mode
 - `block_astrbot_on_forward`: stop AstrBot default reply whenever forwarding triggers
 - `ignore_self`: ignore bot's own messages
+- `image_cache_max_mb`: per-session cached image size cap in MB, `-1` for unlimited
+- `image_cache_ttl_days`: per-session cached image retention in days, `-1` for unlimited
 - `timeout_ms`: HTTP timeout
 
 Notes:
@@ -94,7 +96,11 @@ The plugin posts JSON to NanoClaw:
       { "type": "reply", "id": "<quoted_message_id>" },
       { "type": "text", "text": "<segment_text>" }
     ],
-    "context_only": true
+    "context_only": true,
+    "attachment_cache_policy": {
+      "max_bytes": 104857600,
+      "ttl_hours": 168
+    }
   }
 }
 ```

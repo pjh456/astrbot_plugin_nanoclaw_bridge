@@ -653,6 +653,8 @@ class NanoClawBridge(Star):
         )
         self.ignore_self: bool = bool(cfg.get("ignore_self", True))
         self.timeout_ms: int = int(cfg.get("timeout_ms", 15000))
+        self.image_cache_max_mb: int = int(cfg.get("image_cache_max_mb", -1))
+        self.image_cache_ttl_days: int = int(cfg.get("image_cache_ttl_days", -1))
 
         # Avoid container-level proxy envs breaking local calls
         self._client = httpx.AsyncClient(
@@ -904,6 +906,17 @@ class NanoClawBridge(Star):
             session_id,
             umo,
         )
+        if self.image_cache_max_mb >= 0 or self.image_cache_ttl_days >= 0:
+            attachment_cache_policy: Dict[str, Any] = {}
+            if self.image_cache_max_mb >= 0:
+                attachment_cache_policy["max_bytes"] = self.image_cache_max_mb * 1024 * 1024
+            else:
+                attachment_cache_policy["max_bytes"] = -1
+            if self.image_cache_ttl_days >= 0:
+                attachment_cache_policy["ttl_hours"] = self.image_cache_ttl_days * 24
+            else:
+                attachment_cache_policy["ttl_hours"] = -1
+            metadata["attachment_cache_policy"] = attachment_cache_policy
         should_forward = self._should_forward(event, content)
         if not should_forward and not self._should_send_context_only(
             event, content, is_nc_command

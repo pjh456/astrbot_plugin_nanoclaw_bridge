@@ -35,6 +35,16 @@
     "description": "Ignore messages sent by the bot itself",
     "default": true
   },
+  "image_cache_max_mb": {
+    "type": "int",
+    "description": "Per-session max cached image size in MB (-1 = unlimited)",
+    "default": -1
+  },
+  "image_cache_ttl_days": {
+    "type": "int",
+    "description": "Per-session cached image expiry in days (-1 = unlimited)",
+    "default": -1
+  },
   "timeout_ms": {
     "type": "int",
     "description": "HTTP timeout (ms)",
