@@ -35,16 +35,6 @@
     "description": "Ignore messages sent by the bot itself",
     "default": true
   },
-  "capture_group_context": {
-    "type": "bool",
-    "description": "Capture recent non-trigger group chat for trigger messages",
-    "default": true
-  },
-  "group_context_max_messages": {
-    "type": "int",
-    "description": "Recent group messages bundled into forwarded trigger metadata",
-    "default": 30
-  },
   "timeout_ms": {
     "type": "int",
     "description": "HTTP timeout (ms)",
