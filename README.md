@@ -22,10 +22,14 @@ closer-to-native AstrBot LLM context.
 - `command_prefix`: prefix for command mode
 - `block_astrbot_on_forward`: stop AstrBot default reply whenever forwarding triggers
 - `ignore_self`: ignore bot's own messages
+- `capture_group_context`: keep recent non-trigger group chat in plugin memory
+- `group_context_max_messages`: number of recent group messages attached to a trigger
 - `timeout_ms`: HTTP timeout
 
 Notes:
 - Command messages are never forwarded to NanoClaw. Detection uses AstrBot's activated handlers and CommandFilter/CommandGroupFilter.
+- With `forward_mode=mention` and `capture_group_context=true`, the plugin behaves closer to AstrBot's native group memory flow: ordinary group messages are buffered locally, and when the bot is actually mentioned the recent group history is attached to the forwarded payload.
+- The buffered group context is in-memory only and is cleared on plugin restart or `/nc_reset`.
 
 ## NanoClaw side
 
@@ -92,6 +96,14 @@ The plugin posts JSON to NanoClaw:
     "segments": [
       { "type": "reply", "id": "<quoted_message_id>" },
       { "type": "text", "text": "<segment_text>" }
+    ],
+    "recent_chat_history": [
+      {
+        "timestamp": "<ISO8601>",
+        "sender_id": "<sender_id>",
+        "sender_name": "<sender_name>",
+        "content": "<recent group message>"
+      }
     ]
   }
 }

@@ -1,6 +1,7 @@
 import asyncio
+from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional
 
 import httpx
 
@@ -631,7 +632,7 @@ def _build_metadata(
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.9",
+    "0.2.0",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -653,6 +654,13 @@ class NanoClawBridge(Star):
         )
         self.ignore_self: bool = bool(cfg.get("ignore_self", True))
         self.timeout_ms: int = int(cfg.get("timeout_ms", 15000))
+        self.capture_group_context: bool = bool(cfg.get("capture_group_context", True))
+        self.group_context_max_messages: int = max(
+            0, int(cfg.get("group_context_max_messages", 30))
+        )
+        self._group_context_buffers: Dict[str, Deque[Dict[str, Any]]] = defaultdict(
+            lambda: deque(maxlen=max(1, self.group_context_max_messages))
+        )
 
         # Avoid container-level proxy envs breaking local calls
         self._client = httpx.AsyncClient(
@@ -701,6 +709,71 @@ class NanoClawBridge(Star):
             is_at = getattr(event, "is_at_or_wake_command", False)
             return bool(is_at)
         return True
+
+    def _should_capture_context(
+        self,
+        event: AstrMessageEvent,
+        content: str,
+        is_nc_command: bool,
+    ) -> bool:
+        if not self.capture_group_context:
+            return False
+        if is_nc_command or self._has_command_handler(event):
+            return False
+        try:
+            if not event.get_group_id():
+                return False
+        except Exception:
+            return False
+        if content.strip():
+            return True
+        return bool(_extract_message_segments(event))
+
+    def _get_context_key(
+        self,
+        umo: Optional[Any],
+        session_id: Optional[Any],
+    ) -> str:
+        return str(umo or session_id or "unknown")
+
+    def _snapshot_group_context(self, key: str) -> List[Dict[str, Any]]:
+        buf = self._group_context_buffers.get(key)
+        if not buf:
+            return []
+        return list(buf)
+
+    def _append_group_context(self, key: str, entry: Optional[Dict[str, Any]]) -> None:
+        if not entry or self.group_context_max_messages <= 0:
+            return
+        self._group_context_buffers[key].append(entry)
+
+    def _build_context_entry(
+        self,
+        sender_fields: Dict[str, str],
+        content: str,
+        segments: List[Dict[str, Any]],
+        reply: Optional[Dict[str, Any]],
+        message_id: Optional[Any],
+        timestamp: Optional[int],
+    ) -> Optional[Dict[str, Any]]:
+        trimmed = content.strip()
+        if not trimmed and not segments:
+            return None
+
+        entry: Dict[str, Any] = {
+            "timestamp": _to_iso(timestamp),
+            "sender_id": sender_fields.get("sender_id") or None,
+            "sender_name": sender_fields.get("sender_name") or "unknown",
+        }
+        if trimmed:
+            entry["content"] = trimmed
+        if message_id is not None:
+            entry["message_id"] = str(message_id)
+        if reply:
+            entry["reply"] = reply
+        if segments:
+            entry["segments"] = segments
+        return entry
 
     async def _post(self, payload: Dict[str, Any]) -> None:
         headers = {"Content-Type": "application/json"}
@@ -823,6 +896,10 @@ class NanoClawBridge(Star):
             "umo": str(umo) if umo is not None else None,
         }
         data = await self._post_control(payload)
+        self._group_context_buffers.pop(
+            self._get_context_key(umo, session_id),
+            None,
+        )
         if not data or not data.get("ok"):
             yield event.plain_result("NanoClaw 会话重置失败。")
             return
@@ -832,14 +909,6 @@ class NanoClawBridge(Star):
     async def on_message(self, event: AstrMessageEvent):
         content = event.message_str or ""
         is_nc_command = content.startswith(self.command_prefix)
-        if not self._should_forward(event, content):
-            return
-        if self.block_astrbot_on_forward:
-            # Prevent AstrBot default response whenever forwarding is triggered
-            try:
-                event.stop_event()
-            except Exception:
-                pass
 
         sender_fields = _extract_sender_fields(event)
         sender_permissions = _extract_sender_permissions(event)
@@ -895,6 +964,28 @@ class NanoClawBridge(Star):
             session_id,
             umo,
         )
+        context_key = self._get_context_key(umo, session_id)
+        prior_group_context = self._snapshot_group_context(context_key)
+        context_entry = None
+        if self._should_capture_context(event, content, is_nc_command):
+            context_entry = self._build_context_entry(
+                sender_fields,
+                content,
+                segments,
+                reply,
+                message_id,
+                timestamp,
+            )
+
+        if not self._should_forward(event, content):
+            self._append_group_context(context_key, context_entry)
+            return
+        if self.block_astrbot_on_forward:
+            # Prevent AstrBot default response whenever forwarding is triggered
+            try:
+                event.stop_event()
+            except Exception:
+                pass
 
         is_from_me = False
         if self_id and sender_id:
@@ -902,6 +993,8 @@ class NanoClawBridge(Star):
 
         if is_nc_command:
             content = content[len(self.command_prefix) :].lstrip()
+        if prior_group_context:
+            metadata["recent_chat_history"] = prior_group_context
         payload: Dict[str, Any] = {
             "chat_id": str(umo or session_id or "unknown"),
             "umo": str(umo) if umo is not None else None,
@@ -924,3 +1017,4 @@ class NanoClawBridge(Star):
         }
 
         await self._post(payload)
+        self._append_group_context(context_key, context_entry)
