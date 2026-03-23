@@ -305,15 +305,26 @@ def _normalize_value(value: Any, depth: int = 0) -> Any:
 
 def _extract_segments_from_value(candidate: Any) -> List[Dict[str, Any]]:
     roots = [
+        candidate,
+        _get_attr(candidate, "segments"),
+        _get_attr(candidate, "segment"),
+        _get_attr(candidate, "chain"),
+        _get_attr(candidate, "elements"),
         _get_attr(candidate, "message"),
         _get_attr(candidate, "messages"),
         _get_attr(candidate, "message_chain"),
+        _get_attr(_get_attr(candidate, "raw_message"), "segments"),
+        _get_attr(_get_attr(candidate, "raw_message"), "segment"),
+        _get_attr(_get_attr(candidate, "raw_message"), "chain"),
+        _get_attr(_get_attr(candidate, "raw_message"), "elements"),
         _get_attr(_get_attr(candidate, "raw_message"), "message"),
         _get_attr(_get_attr(candidate, "raw_message"), "messages"),
         _get_attr(_get_attr(candidate, "raw_message"), "message_chain"),
     ]
 
     for root in roots:
+        if _looks_like_segment(root):
+            return [_normalize_segment(root)]
         chain = _iter_message_chain(root)
         if chain:
             return [_normalize_segment(item) for item in chain]
@@ -323,12 +334,36 @@ def _extract_segments_from_value(candidate: Any) -> List[Dict[str, Any]]:
 def _iter_message_chain(message: Any) -> List[Any]:
     if message is None:
         return []
+    if isinstance(message, dict):
+        return []
     if isinstance(message, (list, tuple)):
         return list(message)
     try:
         return list(message)
     except Exception:
         return []
+
+
+def _looks_like_segment(value: Any) -> bool:
+    if value is None:
+        return False
+    for key in (
+        "type",
+        "component_type",
+        "text",
+        "content",
+        "url",
+        "image",
+        "file",
+        "path",
+        "message_id",
+        "id",
+        "data",
+    ):
+        candidate = _get_attr(value, key)
+        if candidate not in (None, "", [], {}):
+            return True
+    return False
 
 
 def _normalize_segment(segment: Any) -> Dict[str, Any]:
@@ -380,13 +415,23 @@ def _extract_message_segments(event: AstrMessageEvent) -> List[Dict[str, Any]]:
         msg_obj = None
 
     roots = [
+        _get_attr(msg_obj, "segments"),
+        _get_attr(msg_obj, "segment"),
+        _get_attr(msg_obj, "chain"),
+        _get_attr(msg_obj, "elements"),
         _get_attr(msg_obj, "message"),
+        _get_attr(_get_attr(msg_obj, "raw_message"), "segments"),
+        _get_attr(_get_attr(msg_obj, "raw_message"), "segment"),
+        _get_attr(_get_attr(msg_obj, "raw_message"), "chain"),
+        _get_attr(_get_attr(msg_obj, "raw_message"), "elements"),
         _get_attr(_get_attr(msg_obj, "raw_message"), "message"),
         _get_attr(_get_attr(msg_obj, "raw_message"), "messages"),
         _get_attr(_get_attr(msg_obj, "raw_message"), "message_chain"),
     ]
 
     for root in roots:
+        if _looks_like_segment(root):
+            return [_normalize_segment(root)]
         chain = _iter_message_chain(root)
         if chain:
             return [_normalize_segment(item) for item in chain]
@@ -499,12 +544,17 @@ def _extract_reply(event: AstrMessageEvent, segments: List[Dict[str, Any]]) -> O
     candidates = [
         _get_attr(msg_obj, "reply"),
         _get_attr(msg_obj, "quote"),
+        _get_attr(msg_obj, "reply_to"),
+        _get_attr(msg_obj, "quoted_message"),
+        _get_attr(msg_obj, "reply_message"),
+        _get_attr(msg_obj, "message_reference"),
         _get_attr(raw, "reply"),
         _get_attr(raw, "quote"),
         _get_attr(raw, "reply_to"),
         _get_attr(raw, "quoted_message"),
         _get_attr(raw, "reply_message"),
         _get_attr(raw, "message_reference"),
+        _get_attr(raw, "source_message"),
     ]
 
     for candidate in candidates:
