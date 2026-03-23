@@ -285,7 +285,11 @@ def _normalize_value(value: Any, depth: int = 0) -> Any:
         "url",
         "file",
         "path",
+        "image",
         "data",
+        "message",
+        "messages",
+        "message_chain",
         "time",
         "timestamp",
     ):
@@ -297,6 +301,23 @@ def _normalize_value(value: Any, depth: int = 0) -> Any:
         if normalized not in (None, "", [], {}):
             result[key] = normalized
     return result or _to_str(value)
+
+
+def _extract_segments_from_value(candidate: Any) -> List[Dict[str, Any]]:
+    roots = [
+        _get_attr(candidate, "message"),
+        _get_attr(candidate, "messages"),
+        _get_attr(candidate, "message_chain"),
+        _get_attr(_get_attr(candidate, "raw_message"), "message"),
+        _get_attr(_get_attr(candidate, "raw_message"), "messages"),
+        _get_attr(_get_attr(candidate, "raw_message"), "message_chain"),
+    ]
+
+    for root in roots:
+        chain = _iter_message_chain(root)
+        if chain:
+            return [_normalize_segment(item) for item in chain]
+    return []
 
 
 def _iter_message_chain(message: Any) -> List[Any]:
@@ -442,12 +463,25 @@ def _summarize_reply(candidate: Any) -> Optional[Dict[str, Any]]:
     elif timestamp_raw:
         reply["timestamp"] = _to_str(timestamp_raw)
 
+    segments = _extract_segments_from_value(candidate)
+    if segments:
+        reply["segments"] = segments
+
     normalized = _normalize_value(candidate)
     if isinstance(normalized, dict):
         compact = {
             key: value
             for key, value in normalized.items()
-            if key not in {"text", "content", "message", "raw_message"}
+            if key
+            not in {
+                "text",
+                "content",
+                "message",
+                "messages",
+                "message_chain",
+                "raw_message",
+                "segments",
+            }
         }
         if compact:
             reply["raw"] = compact
@@ -547,7 +581,7 @@ def _build_metadata(
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.1.8",
+    "0.1.9",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):

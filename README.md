@@ -84,7 +84,10 @@ The plugin posts JSON to NanoClaw:
     "reply": {
       "message_id": "<quoted_message_id>",
       "sender_name": "<quoted_sender>",
-      "content": "<quoted_text>"
+      "content": "<quoted_text>",
+      "segments": [
+        { "type": "image", "url": "<quoted_image_url>" }
+      ]
     },
     "segments": [
       { "type": "reply", "id": "<quoted_message_id>" },
