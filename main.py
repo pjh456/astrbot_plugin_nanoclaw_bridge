@@ -730,7 +730,7 @@ def _build_metadata(
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.2.3",
+    "0.2.4",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -1003,36 +1003,6 @@ class NanoClawBridge(Star):
         }
         await self._post_control(payload)
 
-    @filter.command("nc_status")
-    async def cmd_status(self, event: AstrMessageEvent):
-        payload: Dict[str, Any] = {"action": "status", "chat_id": "status"}
-        data = await self._post_control(payload)
-        if not data or not data.get("ok"):
-            yield event.plain_result("NanoClaw 状态获取失败。")
-            return
-        main = data.get("main")
-        if not main:
-            yield event.plain_result("NanoClaw 尚未设置主控会话。")
-            return
-        msg = f"当前主控: {main.get('name')} ({main.get('jid')})"
-        yield event.plain_result(msg)
-
-    @filter.command("nc_ping")
-    async def cmd_ping(self, event: AstrMessageEvent):
-        start = asyncio.get_event_loop().time()
-        payload: Dict[str, Any] = {"action": "status", "chat_id": "ping"}
-        data = await self._post_control(payload)
-        elapsed_ms = int((asyncio.get_event_loop().time() - start) * 1000)
-        if not data or not data.get("ok"):
-            yield event.plain_result(f"NanoClaw ping 失败（{elapsed_ms}ms）")
-            return
-        main = data.get("main")
-        if not main:
-            yield event.plain_result(f"NanoClaw ping OK（{elapsed_ms}ms），未设置主控")
-            return
-        msg = f"NanoClaw ping OK（{elapsed_ms}ms），主控: {main.get('name')} ({main.get('jid')})"
-        yield event.plain_result(msg)
-
     @filter.command("nc_diag")
     async def cmd_diag(self, event: AstrMessageEvent):
         health_ok = False
@@ -1045,7 +1015,7 @@ class NanoClawBridge(Star):
         health_elapsed_ms = int((asyncio.get_event_loop().time() - health_start) * 1000)
 
         diag_start = asyncio.get_event_loop().time()
-        data = await self._post_control({"action": "diag", "chat_id": "diag"})
+        data = await self._post_control({"action": "diag"})
         diag_elapsed_ms = int((asyncio.get_event_loop().time() - diag_start) * 1000)
 
         yield event.plain_result(
