@@ -3,15 +3,20 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from quart import jsonify, request
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
+from astrbot.core.message.components import At, Plain, Reply
+from astrbot.core.message.message_event_result import MessageChain
 from astrbot.core.star.filter.command import CommandFilter
 from astrbot.core.star.filter.command_group import CommandGroupFilter
 
 
 DEFAULT_INBOUND_URL = "http://127.0.0.1:7801/astrbot/inbound"
+OUTBOUND_ROUTE = "/nanoclaw_bridge/outbound"
+PENDING_EVENT_TTL_SECONDS = 30 * 60
 
 
 def _to_str(value: Any) -> str:
@@ -631,7 +636,7 @@ def _build_metadata(
     "nanoclaw_bridge",
     "pjh456",
     "Forward AstrBot messages to NanoClaw",
-    "0.2.1",
+    "0.2.2",
 )
 class NanoClawBridge(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -655,10 +660,17 @@ class NanoClawBridge(Star):
         self.timeout_ms: int = int(cfg.get("timeout_ms", 15000))
         self.image_cache_max_mb: int = int(cfg.get("image_cache_max_mb", -1))
         self.image_cache_ttl_days: int = int(cfg.get("image_cache_ttl_days", -1))
+        self._pending_events: Dict[str, Dict[str, Any]] = {}
 
         # Avoid container-level proxy envs breaking local calls
         self._client = httpx.AsyncClient(
             timeout=self.timeout_ms / 1000, trust_env=False
+        )
+        self.context.register_web_api(
+            OUTBOUND_ROUTE,
+            self._handle_outbound,
+            ["POST"],
+            "Deliver NanoClaw outbound messages back into AstrBot event context.",
         )
         logger.info(
             f"NanoClaw bridge config inbound={self.inbound_url} control={self.control_url}"
@@ -666,6 +678,109 @@ class NanoClawBridge(Star):
 
     async def terminate(self):
         await self._client.aclose()
+
+    def _cleanup_pending_events(self) -> None:
+        now = datetime.now(timezone.utc).timestamp()
+        expired_keys = [
+            key
+            for key, state in self._pending_events.items()
+            if state.get("expires_at", 0) <= now
+        ]
+        for key in expired_keys:
+            self._pending_events.pop(key, None)
+
+    def _remember_event(
+        self,
+        chat_key: str,
+        event: AstrMessageEvent,
+        umo: Optional[str],
+    ) -> None:
+        self._cleanup_pending_events()
+        self._pending_events[chat_key] = {
+            "event": event,
+            "umo": str(umo) if umo else "",
+            "expires_at": datetime.now(timezone.utc).timestamp()
+            + PENDING_EVENT_TTL_SECONDS,
+        }
+
+    def _resolve_pending_event(
+        self,
+        chat_id: str,
+        umo: str,
+    ) -> Optional[Dict[str, Any]]:
+        self._cleanup_pending_events()
+        if chat_id and chat_id in self._pending_events:
+            return self._pending_events[chat_id]
+        if umo:
+            for state in self._pending_events.values():
+                if state.get("umo") == umo:
+                    return state
+        return None
+
+    def _build_outbound_chain(
+        self,
+        event: AstrMessageEvent,
+        text: str,
+        umo: str,
+    ) -> MessageChain:
+        cfg = self.context.get_config(umo or None)
+        platform_settings = cfg.get("platform_settings", {}) if cfg else {}
+        reply_prefix = _to_str(platform_settings.get("reply_prefix")).strip()
+        reply_with_mention = bool(platform_settings.get("reply_with_mention", False))
+        reply_with_quote = bool(platform_settings.get("reply_with_quote", False))
+
+        if reply_prefix:
+            text = reply_prefix + text
+
+        chain = []
+        if reply_with_quote:
+            chain.append(
+                Reply(
+                    id=event.message_obj.message_id,
+                    sender_id=event.get_sender_id(),
+                    sender_nickname=event.get_sender_name(),
+                    message_str=event.message_str,
+                    text=event.message_str,
+                    qq=event.get_sender_id(),
+                )
+            )
+        if reply_with_mention and not event.is_private_chat():
+            chain.append(At(qq=event.get_sender_id(), name=event.get_sender_name()))
+            if text:
+                text = "\n" + text
+        if text:
+            chain.append(Plain(text=text))
+        return MessageChain(chain=chain)
+
+    async def _handle_outbound(self):
+        if self.token:
+            auth = request.headers.get("Authorization", "")
+            token = auth[len("Bearer ") :] if auth.startswith("Bearer ") else ""
+            header_token = request.headers.get("x-astrbot-token", "")
+            if token != self.token and header_token != self.token:
+                return jsonify({"ok": False, "error": "Unauthorized"}), 401
+
+        payload = await request.get_json(silent=True) or {}
+        chat_id = _to_str(payload.get("chat_id")).strip()
+        umo = _to_str(payload.get("umo")).strip()
+        text = _to_str(payload.get("text")).strip()
+        if not chat_id and not umo:
+            return jsonify({"ok": False, "error": "Missing chat_id"}), 400
+        if not text:
+            return jsonify({"ok": False, "error": "Missing text"}), 400
+
+        pending = self._resolve_pending_event(chat_id, umo)
+        if not pending:
+            return jsonify({"ok": False, "error": "No pending event"}), 404
+
+        event = pending["event"]
+        try:
+            chain = self._build_outbound_chain(event, text, umo or pending.get("umo", ""))
+            await event.send(chain)
+            return jsonify({"ok": True})
+        except Exception as exc:
+            logger.warning(f"NanoClaw outbound send failed: {exc!r}")
+            return jsonify({"ok": False, "error": "Send failed"}), 500
 
     def _is_self_message(self, event: AstrMessageEvent, sender_id: str) -> bool:
         try:
@@ -938,8 +1053,10 @@ class NanoClawBridge(Star):
 
         if is_nc_command:
             content = content[len(self.command_prefix) :].lstrip()
+        chat_key = str(umo or session_id or "unknown")
+        self._remember_event(chat_key, event, str(umo) if umo is not None else None)
         payload: Dict[str, Any] = {
-            "chat_id": str(umo or session_id or "unknown"),
+            "chat_id": chat_key,
             "umo": str(umo) if umo is not None else None,
             "sender_id": sender_id,
             "sender_name": sender_name or sender_id or "unknown",
